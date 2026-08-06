@@ -26,4 +26,12 @@ mkdir -p "$ROOT_DIR/idl"
 cp target/idl/points_vault.json "$ROOT_DIR/idl/points_vault.json"
 cp target/types/points_vault.ts "$ROOT_DIR/idl/points_vault.ts"
 
-echo "IDL published to $ROOT_DIR/idl/"
+# The dashboard bundles its own copy: Next cannot import from outside its source root, and a
+# stale copy would silently build wrong instruction data.
+if [[ -d "$ROOT_DIR/dashboard/src/lib/idl" ]]; then
+  cp target/idl/points_vault.json "$ROOT_DIR/dashboard/src/lib/idl/points_vault.json"
+  cp target/types/points_vault.ts "$ROOT_DIR/dashboard/src/lib/idl/points_vault.ts"
+  echo "IDL published to $ROOT_DIR/idl/ and the dashboard"
+else
+  echo "IDL published to $ROOT_DIR/idl/"
+fi
