@@ -1,0 +1,24 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+
+[programs.devnet]
+points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+# --no-experimental-strip-types keeps Node 24 from loading the .ts tests as ESM behind
+# ts-node's back, which breaks named imports from CommonJS packages like @coral-xyz/anchor.
+test = "NODE_OPTIONS=--no-experimental-strip-types TS_NODE_PROJECT=./tsconfig.json yarn run mocha -r ts-node/register -t 1000000 tests/**/*.ts"

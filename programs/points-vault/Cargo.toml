@@ -1,0 +1,26 @@
+[package]
+name = "points-vault"
+version = "0.1.0"
+description = "Non-custodial SPL token vaults. The program never holds authority over user funds."
+edition = "2021"
+
+# Rust 1.89. Anything older than v1.52 ships a cargo that cannot parse the
+# edition-2024 manifests now present in the anchor-spl dependency tree.
+[package.metadata.solana]
+tools-version = "v1.54"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "points_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["event-cpi"] }
+anchor-spl = "0.31.1"
