@@ -11,6 +11,11 @@ points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
 [programs.devnet]
 points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
 
+# Deployed 2026-08-10 in slot 438418459. Same address as the other clusters: the program
+# keypair was never committed, so it was still unclaimed on mainnet.
+[programs.mainnet]
+points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+
 [registry]
 url = "https://api.apr.dev"
 
