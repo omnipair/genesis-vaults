@@ -7,7 +7,6 @@ use crate::{errors::PointsVaultError, events::VaultWithdrawn, VAULT_SEED};
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(vault_id: u64)]
 pub struct Withdraw<'info> {
     /// The token authority on the vault. The CPI below is a plain `invoke`, so this
     /// signature is the only thing that can move the funds.
@@ -17,12 +16,7 @@ pub struct Withdraw<'info> {
 
     #[account(
         mut,
-        seeds = [
-            VAULT_SEED,
-            owner.key().as_ref(),
-            mint.key().as_ref(),
-            &vault_id.to_le_bytes(),
-        ],
+        seeds = [VAULT_SEED, owner.key().as_ref(), mint.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = owner,
@@ -40,7 +34,7 @@ pub struct Withdraw<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<Withdraw>, vault_id: u64, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     require!(amount > 0, PointsVaultError::ZeroAmount);
 
     let balance_before = ctx.accounts.vault.amount;
@@ -71,7 +65,6 @@ pub fn handler(ctx: Context<Withdraw>, vault_id: u64, amount: u64) -> Result<()>
         owner: ctx.accounts.owner.key(),
         mint: ctx.accounts.mint.key(),
         destination: ctx.accounts.destination.key(),
-        vault_id,
         amount,
         amount_debited,
         new_balance,

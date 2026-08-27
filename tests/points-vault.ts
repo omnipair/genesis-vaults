@@ -38,6 +38,8 @@ describe("points_vault", () => {
   let ownerAta: PublicKey;
   let stranger: Keypair;
   let strangerAta: PublicKey;
+  // The owner's one and only vault for `mint`.
+  let vault: PublicKey;
 
   before(async () => {
     owner = await newFundedKeypair(provider);
@@ -81,15 +83,14 @@ describe("points_vault", () => {
       mintAuthority,
       1000 * ONE
     );
+
+    vault = deriveVault(program.programId, owner.publicKey, mint);
   });
 
   describe("create_vault", () => {
     it("creates a token account whose authority is the user, not the program", async () => {
-      const vaultId = new BN(0);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-
       const sig = await program.methods
-        .createVault(vaultId)
+        .createVault()
         .accountsPartial({
           payer: owner.publicKey,
           owner: owner.publicKey,
@@ -115,41 +116,47 @@ describe("points_vault", () => {
       assert.isTrue(created!.data.owner.equals(owner.publicKey));
       assert.isTrue(created!.data.mint.equals(mint));
       assert.equal(created!.data.decimals, DECIMALS);
-      assert.equal(created!.data.vaultId.toString(), "0");
     });
 
-    it("lets one wallet hold several vaults for the same mint", async () => {
-      const vaultId = new BN(7);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
+    it("allows only one vault per mint", async () => {
+      // The address depends on nothing but owner and mint, so there is no second address to
+      // create. Allocation fails because the account is already there.
+      let failed = false;
+      try {
+        await program.methods
+          .createVault()
+          .accountsPartial({
+            payer: owner.publicKey,
+            owner: owner.publicKey,
+            mint,
+            vault,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([owner])
+          .rpc();
+      } catch (e) {
+        failed = true;
+      }
+      assert.isTrue(failed, "a second vault for the same mint must not be creatable");
 
-      await program.methods
-        .createVault(vaultId)
-        .accountsPartial({
-          payer: owner.publicKey,
-          owner: owner.publicKey,
-          mint,
-          vault,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([owner])
-        .rpc();
-
+      // And the original is untouched by the attempt.
       const account = await getAccount(connection, vault);
       assert.isTrue(account.owner.equals(owner.publicKey));
     });
 
     it("refuses to create a vault for a wallet that did not sign", async () => {
-      const vaultId = new BN(99);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
+      // A wallet with no vault yet, so this fails on the missing signature rather than on the
+      // address already being occupied.
+      const victim = Keypair.generate();
+      const victimVault = deriveVault(program.programId, victim.publicKey, mint);
 
-      // `stranger` pays, but claims `owner` as the vault owner without owner's signature.
       const ix = await program.methods
-        .createVault(vaultId)
+        .createVault()
         .accountsPartial({
           payer: stranger.publicKey,
-          owner: owner.publicKey,
+          owner: victim.publicKey,
           mint,
-          vault,
+          vault: victimVault,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .instruction();
@@ -165,20 +172,16 @@ describe("points_vault", () => {
         failed = true;
       }
       assert.isTrue(failed, "creating a vault without the owner's signature must fail");
+
+      const account = await connection.getAccountInfo(victimVault);
+      assert.isNull(account, "no vault should have been created");
     });
   });
 
   describe("deposit", () => {
-    const vaultId = new BN(0);
-    let vault: PublicKey;
-
-    before(() => {
-      vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-    });
-
     it("moves tokens in and reports the measured balance delta", async () => {
       const sig = await program.methods
-        .deposit(vaultId, new BN(100 * ONE))
+        .deposit(new BN(100 * ONE))
         .accountsPartial({
           depositor: owner.publicKey,
           owner: owner.publicKey,
@@ -204,7 +207,7 @@ describe("points_vault", () => {
 
     it("lets a third party deposit into someone else's vault", async () => {
       const sig = await program.methods
-        .deposit(vaultId, new BN(50 * ONE))
+        .deposit(new BN(50 * ONE))
         .accountsPartial({
           depositor: stranger.publicKey,
           owner: owner.publicKey,
@@ -228,7 +231,7 @@ describe("points_vault", () => {
     it("rejects a zero-amount deposit", async () => {
       try {
         await program.methods
-          .deposit(vaultId, new BN(0))
+          .deposit(new BN(0))
           .accountsPartial({
             depositor: owner.publicKey,
             owner: owner.publicKey,
@@ -247,18 +250,11 @@ describe("points_vault", () => {
   });
 
   describe("withdraw", () => {
-    const vaultId = new BN(0);
-    let vault: PublicKey;
-
-    before(() => {
-      vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-    });
-
     it("lets the owner take funds out", async () => {
       const before = await getAccount(connection, ownerAta);
 
       const sig = await program.methods
-        .withdraw(vaultId, new BN(30 * ONE))
+        .withdraw(new BN(30 * ONE))
         .accountsPartial({
           owner: owner.publicKey,
           mint,
@@ -285,7 +281,7 @@ describe("points_vault", () => {
     it("does not let anyone but the owner withdraw", async () => {
       try {
         await program.methods
-          .withdraw(vaultId, new BN(1 * ONE))
+          .withdraw(new BN(1 * ONE))
           .accountsPartial({
             owner: stranger.publicKey,
             mint,
@@ -305,9 +301,6 @@ describe("points_vault", () => {
 
   describe("non-custodial guarantees", () => {
     it("lets the owner move funds with a raw SPL transfer, with the program absent", async () => {
-      const vaultId = new BN(0);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-
       const before = await getAccount(connection, vault);
       assert.isTrue(before.amount > 0n, "vault should hold something to move");
 
@@ -368,11 +361,8 @@ describe("points_vault", () => {
 
   describe("close_vault", () => {
     it("refuses to close a vault that still holds tokens", async () => {
-      const vaultId = new BN(7);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-
       await program.methods
-        .deposit(vaultId, new BN(5 * ONE))
+        .deposit(new BN(5 * ONE))
         .accountsPartial({
           depositor: owner.publicKey,
           owner: owner.publicKey,
@@ -386,7 +376,7 @@ describe("points_vault", () => {
 
       try {
         await program.methods
-          .closeVault(vaultId)
+          .closeVault()
           .accountsPartial({
             owner: owner.publicKey,
             mint,
@@ -403,11 +393,8 @@ describe("points_vault", () => {
     });
 
     it("closes an empty vault and returns the rent", async () => {
-      const vaultId = new BN(7);
-      const vault = deriveVault(program.programId, owner.publicKey, mint, vaultId);
-
       await program.methods
-        .withdraw(vaultId, new BN(5 * ONE))
+        .withdraw(new BN(5 * ONE))
         .accountsPartial({
           owner: owner.publicKey,
           mint,
@@ -419,7 +406,7 @@ describe("points_vault", () => {
         .rpc();
 
       const sig = await program.methods
-        .closeVault(vaultId)
+        .closeVault()
         .accountsPartial({
           owner: owner.publicKey,
           mint,
@@ -437,6 +424,26 @@ describe("points_vault", () => {
       const closed = events.find((e) => e.name === "vaultClosed");
       assert.ok(closed);
       assert.isTrue(closed!.data.vault.equals(vault));
+    });
+
+    it("frees the address for a new vault, so the limit is one at a time", async () => {
+      // One vault per mint is a limit on how many exist at once, not on how many a wallet may
+      // ever have. The indexer relies on this: a vault row can have several incarnations.
+      await program.methods
+        .createVault()
+        .accountsPartial({
+          payer: owner.publicKey,
+          owner: owner.publicKey,
+          mint,
+          vault,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      const account = await getAccount(connection, vault);
+      assert.isTrue(account.owner.equals(owner.publicKey));
+      assert.equal(account.amount.toString(), "0");
     });
   });
 });

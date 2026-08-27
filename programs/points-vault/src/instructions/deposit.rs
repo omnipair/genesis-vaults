@@ -7,7 +7,6 @@ use crate::{errors::PointsVaultError, events::VaultDeposited, VAULT_SEED};
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(vault_id: u64)]
 pub struct Deposit<'info> {
     /// Funds the transfer and signs it. Need not be the vault owner: anyone can top up
     /// anyone else's vault.
@@ -32,12 +31,7 @@ pub struct Deposit<'info> {
     /// full control of it via raw SPL Token instructions.
     #[account(
         mut,
-        seeds = [
-            VAULT_SEED,
-            owner.key().as_ref(),
-            mint.key().as_ref(),
-            &vault_id.to_le_bytes(),
-        ],
+        seeds = [VAULT_SEED, owner.key().as_ref(), mint.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = owner,
@@ -48,7 +42,7 @@ pub struct Deposit<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<Deposit>, vault_id: u64, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount > 0, PointsVaultError::ZeroAmount);
 
     let balance_before = ctx.accounts.vault.amount;
@@ -78,7 +72,6 @@ pub fn handler(ctx: Context<Deposit>, vault_id: u64, amount: u64) -> Result<()> 
         owner: ctx.accounts.owner.key(),
         mint: ctx.accounts.mint.key(),
         depositor: ctx.accounts.depositor.key(),
-        vault_id,
         amount,
         amount_received,
         new_balance,

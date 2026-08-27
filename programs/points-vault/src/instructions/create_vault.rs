@@ -5,7 +5,6 @@ use crate::{events::VaultCreated, VAULT_SEED};
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(vault_id: u64)]
 pub struct CreateVault<'info> {
     /// Pays rent for the new token account. May be anyone.
     #[account(mut)]
@@ -18,15 +17,13 @@ pub struct CreateVault<'info> {
 
     /// The vault itself: an ordinary SPL token account that happens to live at a PDA.
     /// `token::authority = owner` is what makes this non-custodial.
+    ///
+    /// `init` is also what enforces one vault per mint: the seeds admit a single address per
+    /// `(owner, mint)`, so a second creation finds the account already allocated and fails.
     #[account(
         init,
         payer = payer,
-        seeds = [
-            VAULT_SEED,
-            owner.key().as_ref(),
-            mint.key().as_ref(),
-            &vault_id.to_le_bytes(),
-        ],
+        seeds = [VAULT_SEED, owner.key().as_ref(), mint.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = owner,
@@ -38,12 +35,11 @@ pub struct CreateVault<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<CreateVault>, vault_id: u64) -> Result<()> {
+pub fn handler(ctx: Context<CreateVault>) -> Result<()> {
     emit_cpi!(VaultCreated {
         vault: ctx.accounts.vault.key(),
         owner: ctx.accounts.owner.key(),
         mint: ctx.accounts.mint.key(),
-        vault_id,
         token_program: ctx.accounts.token_program.key(),
         decimals: ctx.accounts.mint.decimals,
         timestamp: Clock::get()?.unix_timestamp,

@@ -27,20 +27,26 @@ There is no admin key, no pause switch, and no instruction that takes a privileg
 ## Address derivation
 
 ```
-seeds = ["vault", owner, mint, vault_id.to_le_bytes()]
+seeds = ["vault", owner, mint]
 ```
 
-`vault_id` is a `u64` chosen by the user, so one wallet can hold many independent vaults for
-the same mint.
+A wallet therefore has exactly one vault per mint. Nothing enforces that beyond the seeds
+themselves: they admit a single address per `(owner, mint)`, so a second `create_vault` finds
+the account already allocated and fails there. There is no counter to keep and no uniqueness
+check to get wrong.
+
+The limit is on how many vaults exist at once, not how many a wallet may ever have. Closing a
+vault deallocates the token account and frees the address, so the same pair can be created
+again afterwards.
 
 ## Instructions
 
 | Instruction | Signer | What it does |
 | ----------- | ------ | ------------ |
-| `create_vault(vault_id)` | `payer`, `owner` | Allocates the token account at the PDA with `owner` as authority. Emits `VaultCreated`. |
-| `deposit(vault_id, amount)` | `depositor` | `transfer_checked` into the vault. Anyone may deposit into anyone's vault. Emits `VaultDeposited`. |
-| `withdraw(vault_id, amount)` | `owner` | `transfer_checked` out of the vault, authorised by the owner's signature. Emits `VaultWithdrawn`. |
-| `close_vault(vault_id)` | `owner` | Closes an empty vault, returning rent to `rent_destination`. Emits `VaultClosed`. |
+| `create_vault()` | `payer`, `owner` | Allocates the token account at the PDA with `owner` as authority. Emits `VaultCreated`. |
+| `deposit(amount)` | `depositor` | `transfer_checked` into the vault. Anyone may deposit into anyone's vault. Emits `VaultDeposited`. |
+| `withdraw(amount)` | `owner` | `transfer_checked` out of the vault, authorised by the owner's signature. Emits `VaultWithdrawn`. |
+| `close_vault()` | `owner` | Closes an empty vault, returning rent to `rent_destination`. Emits `VaultClosed`. |
 
 `owner` must sign `create_vault` so nobody can create vaults attributed to a wallet that never
 asked for one.

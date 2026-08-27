@@ -1,12 +1,14 @@
 use anchor_lang::prelude::*;
 
 /// Emitted once per vault, when its token account is allocated.
+///
+/// No identifier beyond `owner` and `mint` is carried, because those two determine the address:
+/// a wallet has at most one vault per mint at a time.
 #[event]
 pub struct VaultCreated {
     pub vault: Pubkey,
     pub owner: Pubkey,
     pub mint: Pubkey,
-    pub vault_id: u64,
     pub token_program: Pubkey,
     pub decimals: u8,
     pub timestamp: i64,
@@ -20,7 +22,6 @@ pub struct VaultDeposited {
     pub owner: Pubkey,
     pub mint: Pubkey,
     pub depositor: Pubkey,
-    pub vault_id: u64,
     pub amount: u64,
     pub amount_received: u64,
     pub new_balance: u64,
@@ -33,7 +34,6 @@ pub struct VaultWithdrawn {
     pub owner: Pubkey,
     pub mint: Pubkey,
     pub destination: Pubkey,
-    pub vault_id: u64,
     pub amount: u64,
     pub amount_debited: u64,
     pub new_balance: u64,
@@ -45,7 +45,6 @@ pub struct VaultClosed {
     pub vault: Pubkey,
     pub owner: Pubkey,
     pub mint: Pubkey,
-    pub vault_id: u64,
     pub rent_destination: Pubkey,
     pub timestamp: i64,
 }

@@ -5,7 +5,6 @@ use crate::{errors::PointsVaultError, events::VaultClosed, VAULT_SEED};
 
 #[event_cpi]
 #[derive(Accounts)]
-#[instruction(vault_id: u64)]
 pub struct CloseVault<'info> {
     pub owner: Signer<'info>,
 
@@ -13,12 +12,7 @@ pub struct CloseVault<'info> {
 
     #[account(
         mut,
-        seeds = [
-            VAULT_SEED,
-            owner.key().as_ref(),
-            mint.key().as_ref(),
-            &vault_id.to_le_bytes(),
-        ],
+        seeds = [VAULT_SEED, owner.key().as_ref(), mint.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = owner,
@@ -33,7 +27,7 @@ pub struct CloseVault<'info> {
     pub token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<CloseVault>, vault_id: u64) -> Result<()> {
+pub fn handler(ctx: Context<CloseVault>) -> Result<()> {
     require!(
         ctx.accounts.vault.amount == 0,
         PointsVaultError::VaultNotEmpty
@@ -57,7 +51,6 @@ pub fn handler(ctx: Context<CloseVault>, vault_id: u64) -> Result<()> {
         vault,
         owner,
         mint,
-        vault_id,
         rent_destination,
         timestamp: Clock::get()?.unix_timestamp,
     });

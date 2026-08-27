@@ -1,5 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program, BN } from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
 import bs58 from "bs58";
 
@@ -12,12 +12,10 @@ export const VAULT_SEED = Buffer.from("vault");
 export function deriveVault(
   programId: PublicKey,
   owner: PublicKey,
-  mint: PublicKey,
-  vaultId: number | BN
+  mint: PublicKey
 ): PublicKey {
-  const id = new BN(vaultId).toArrayLike(Buffer, "le", 8);
   return PublicKey.findProgramAddressSync(
-    [VAULT_SEED, owner.toBuffer(), mint.toBuffer(), id],
+    [VAULT_SEED, owner.toBuffer(), mint.toBuffer()],
     programId
   )[0];
 }
