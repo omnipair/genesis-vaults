@@ -55,6 +55,10 @@ Both `deposit` and `withdraw` re-assert `token::authority = owner` on the vault.
 reassigns the vault's authority with a raw `SetAuthority`, the program's helpers stop working
 for that vault — but the owner keeps full control through raw SPL Token instructions.
 
+Both also reject a transfer whose other side is the vault itself. The token program accepts
+such a transfer and moves nothing, which would leave an event reporting an `amount` that never
+went anywhere.
+
 ## Events
 
 All four events are emitted with `emit_cpi!` (a self-CPI), not `emit!`. Program logs get

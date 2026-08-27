@@ -29,6 +29,11 @@ pub struct Deposit<'info> {
     /// Re-asserting `token::authority = owner` means a vault whose authority has been
     /// reassigned away can no longer be topped up through this program. Its owner still has
     /// full control of it via raw SPL Token instructions.
+    ///
+    /// The token program lets an account transfer to itself and reports success while moving
+    /// nothing, which would leave a `VaultDeposited` claiming an `amount` that never arrived.
+    /// The constraint sits here rather than on `source` because `source` is declared first and
+    /// cannot refer to an account it has not seen yet.
     #[account(
         mut,
         seeds = [VAULT_SEED, owner.key().as_ref(), mint.key().as_ref()],
@@ -36,6 +41,7 @@ pub struct Deposit<'info> {
         token::mint = mint,
         token::authority = owner,
         token::token_program = token_program,
+        constraint = vault.key() != source.key() @ PointsVaultError::SelfTransfer,
     )]
     pub vault: InterfaceAccount<'info, TokenAccount>,
 

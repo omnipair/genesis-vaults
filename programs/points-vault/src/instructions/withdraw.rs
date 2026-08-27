@@ -24,10 +24,13 @@ pub struct Withdraw<'info> {
     )]
     pub vault: InterfaceAccount<'info, TokenAccount>,
 
+    /// The token program lets an account transfer to itself and reports success while moving
+    /// nothing, which would leave a `VaultWithdrawn` claiming an `amount` that never left.
     #[account(
         mut,
         token::mint = mint,
         token::token_program = token_program,
+        constraint = destination.key() != vault.key() @ PointsVaultError::SelfTransfer,
     )]
     pub destination: InterfaceAccount<'info, TokenAccount>,
 

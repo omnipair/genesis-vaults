@@ -10,4 +10,7 @@ pub enum PointsVaultError {
 
     #[msg("Vault must be empty before it can be closed")]
     VaultNotEmpty,
+
+    #[msg("A vault cannot be both sides of a transfer")]
+    SelfTransfer,
 }

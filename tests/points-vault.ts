@@ -242,10 +242,37 @@ describe("points_vault", () => {
           })
           .signers([owner])
           .rpc();
-        assert.fail("expected ZeroAmount");
+        assert.fail("a zero amount must be rejected");
       } catch (e: any) {
         expect(e.error?.errorCode?.code ?? e.toString()).to.contain("ZeroAmount");
       }
+    });
+
+    it("rejects a deposit that names the vault as its own source", async () => {
+      // The token program accepts a transfer from an account to itself and moves nothing, so
+      // without the guard this would emit a deposit for an `amount` nobody ever sent.
+      const before = await getAccount(connection, vault);
+
+      try {
+        await program.methods
+          .deposit(new BN(10 * ONE))
+          .accountsPartial({
+            depositor: owner.publicKey,
+            owner: owner.publicKey,
+            mint,
+            source: vault,
+            vault,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([owner])
+          .rpc();
+        assert.fail("a deposit from the vault to itself must be rejected");
+      } catch (e: any) {
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("SelfTransfer");
+      }
+
+      const after = await getAccount(connection, vault);
+      assert.equal(after.amount.toString(), before.amount.toString());
     });
   });
 
@@ -296,6 +323,30 @@ describe("points_vault", () => {
         // The seeds bind the vault to `owner`, so a stranger's derivation never matches.
         expect(e.toString()).to.match(/ConstraintSeeds|ConstraintTokenOwner|2006|2015/);
       }
+    });
+
+    it("rejects a withdrawal that names the vault as its own destination", async () => {
+      const before = await getAccount(connection, vault);
+
+      try {
+        await program.methods
+          .withdraw(new BN(10 * ONE))
+          .accountsPartial({
+            owner: owner.publicKey,
+            mint,
+            vault,
+            destination: vault,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([owner])
+          .rpc();
+        assert.fail("a withdrawal into the vault itself must be rejected");
+      } catch (e: any) {
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("SelfTransfer");
+      }
+
+      const after = await getAccount(connection, vault);
+      assert.equal(after.amount.toString(), before.amount.toString());
     });
   });
 
@@ -386,7 +437,7 @@ describe("points_vault", () => {
           })
           .signers([owner])
           .rpc();
-        assert.fail("expected VaultNotEmpty");
+        assert.fail("a vault holding tokens must not be closeable");
       } catch (e: any) {
         expect(e.error?.errorCode?.code ?? e.toString()).to.contain("VaultNotEmpty");
       }
