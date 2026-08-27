@@ -74,6 +74,13 @@ a transfer fee, and the indexer records the measured value.
 Built against `anchor_spl::token_interface`, so both SPL Token and Token-2022 mints work. The
 token program used by a vault is fixed at creation and recorded in `VaultCreated`.
 
+A transfer fee is withheld in the account *receiving* a transfer, so a vault accumulates
+withheld fees as deposits arrive and no withdrawal takes them back out. They are not part of
+the balance, and the token program refuses to close an account while any remain. `close_vault`
+therefore harvests them to the mint first, which needs no authority and costs the owner
+nothing: the fees were deducted when they arrived and the mint is where they were always
+headed. This is why `close_vault` takes the mint as writable.
+
 ## Building
 
 ```bash

@@ -1,13 +1,21 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import {
+  ExtensionType,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
-  createMint,
   createAssociatedTokenAccount,
-  mintTo,
-  getAccount,
+  createInitializeMint2Instruction,
+  createInitializeTransferFeeConfigInstruction,
+  createMint,
   createTransferCheckedInstruction,
+  getAccount,
+  getMint,
+  getMintLen,
+  getTransferFeeAmount,
+  getTransferFeeConfig,
+  mintTo,
 } from "@solana/spl-token";
 import { assert, expect } from "chai";
 import * as fs from "fs";
@@ -495,6 +503,219 @@ describe("points_vault", () => {
       const account = await getAccount(connection, vault);
       assert.isTrue(account.owner.equals(owner.publicKey));
       assert.equal(account.amount.toString(), "0");
+    });
+  });
+
+  // Everything above runs on a classic mint, where the amount sent and the amount received are
+  // always the same number. A transfer fee is what makes them diverge, and it is the reason
+  // both fields exist. It also parks value in a vault that is not part of its balance.
+  describe("token-2022 transfer fees", () => {
+    const FEE_BPS = 100;
+    /** Set high enough that the basis points, never the cap, decide the fees below. */
+    const MAX_FEE = BigInt(1000 * ONE);
+
+    const feeOn = (amount: number) => (amount * FEE_BPS) / 10_000;
+
+    let feeMint: PublicKey;
+    let feeOwnerAta: PublicKey;
+    let feeVault: PublicKey;
+
+    /** Fees taken out of transfers into `address`, waiting to be swept to the mint. */
+    async function withheldOn(address: PublicKey): Promise<bigint> {
+      const account = await getAccount(connection, address, undefined, TOKEN_2022_PROGRAM_ID);
+      return getTransferFeeAmount(account)?.withheldAmount ?? 0n;
+    }
+
+    async function withheldOnMint(): Promise<bigint> {
+      const info = await getMint(connection, feeMint, undefined, TOKEN_2022_PROGRAM_ID);
+      return getTransferFeeConfig(info)?.withheldAmount ?? 0n;
+    }
+
+    before(async () => {
+      const payer = (provider.wallet as anchor.Wallet).payer;
+      const mintKeypair = Keypair.generate();
+      feeMint = mintKeypair.publicKey;
+
+      // A mint carrying an extension has to be allocated and initialised by hand: the
+      // extension must be in place before InitializeMint2 fixes the layout.
+      const space = getMintLen([ExtensionType.TransferFeeConfig]);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.createAccount({
+            fromPubkey: payer.publicKey,
+            newAccountPubkey: feeMint,
+            space,
+            lamports: await connection.getMinimumBalanceForRentExemption(space),
+            programId: TOKEN_2022_PROGRAM_ID,
+          }),
+          createInitializeTransferFeeConfigInstruction(
+            feeMint,
+            payer.publicKey,
+            payer.publicKey,
+            FEE_BPS,
+            MAX_FEE,
+            TOKEN_2022_PROGRAM_ID
+          ),
+          createInitializeMint2Instruction(
+            feeMint,
+            DECIMALS,
+            payer.publicKey,
+            null,
+            TOKEN_2022_PROGRAM_ID
+          )
+        ),
+        [mintKeypair]
+      );
+
+      feeOwnerAta = await createAssociatedTokenAccount(
+        connection,
+        payer,
+        feeMint,
+        owner.publicKey,
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
+      await mintTo(
+        connection,
+        payer,
+        feeMint,
+        feeOwnerAta,
+        payer,
+        1000 * ONE,
+        [],
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
+
+      // The same wallet already has a vault for the classic mint, so this also covers one
+      // wallet holding vaults for two different mints.
+      feeVault = deriveVault(program.programId, owner.publicKey, feeMint);
+    });
+
+    it("creates a vault sized for the extensions the mint requires", async () => {
+      await program.methods
+        .createVault()
+        .accountsPartial({
+          payer: owner.publicKey,
+          owner: owner.publicKey,
+          mint: feeMint,
+          vault: feeVault,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      // A fee mint requires its token accounts to carry TransferFeeAmount, so allocating only
+      // the base 165 bytes would have failed at initialisation.
+      const account = await getAccount(connection, feeVault, undefined, TOKEN_2022_PROGRAM_ID);
+      assert.isTrue(account.owner.equals(owner.publicKey));
+      assert.isNotNull(getTransferFeeAmount(account), "vault should carry the fee extension");
+    });
+
+    it("reports the amount that arrived, not the amount that was sent", async () => {
+      const sent = 100 * ONE;
+
+      const sig = await program.methods
+        .deposit(new BN(sent))
+        .accountsPartial({
+          depositor: owner.publicKey,
+          owner: owner.publicKey,
+          mint: feeMint,
+          source: feeOwnerAta,
+          vault: feeVault,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      const events = await fetchEvents(connection, program, sig);
+      const deposited = events.find((e) => e.name === "vaultDeposited");
+      assert.ok(deposited);
+      assert.equal(deposited!.data.amount.toString(), sent.toString());
+      assert.equal(
+        deposited!.data.amountReceived.toString(),
+        (sent - feeOn(sent)).toString(),
+        "the fee is taken on the way in"
+      );
+      assert.isTrue(
+        deposited!.data.amountReceived.lt(deposited!.data.amount),
+        "a measured delta is the whole reason these are two fields"
+      );
+
+      const account = await getAccount(connection, feeVault, undefined, TOKEN_2022_PROGRAM_ID);
+      assert.equal(account.amount.toString(), (sent - feeOn(sent)).toString());
+      assert.equal((await withheldOn(feeVault)).toString(), feeOn(sent).toString());
+    });
+
+    it("debits the vault in full on the way out, the fee falling on the destination", async () => {
+      const asked = 50 * ONE;
+      const before = await getAccount(connection, feeOwnerAta, undefined, TOKEN_2022_PROGRAM_ID);
+
+      const sig = await program.methods
+        .withdraw(new BN(asked))
+        .accountsPartial({
+          owner: owner.publicKey,
+          mint: feeMint,
+          vault: feeVault,
+          destination: feeOwnerAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      const events = await fetchEvents(connection, program, sig);
+      const withdrawn = events.find((e) => e.name === "vaultWithdrawn");
+      assert.ok(withdrawn);
+      assert.equal(
+        withdrawn!.data.amountDebited.toString(),
+        asked.toString(),
+        "the vault loses the whole amount; the fee comes out of what arrives"
+      );
+
+      const after = await getAccount(connection, feeOwnerAta, undefined, TOKEN_2022_PROGRAM_ID);
+      assert.equal((after.amount - before.amount).toString(), (asked - feeOn(asked)).toString());
+    });
+
+    it("closes a vault that is empty but still holds withheld fees", async () => {
+      const remaining = await getAccount(connection, feeVault, undefined, TOKEN_2022_PROGRAM_ID);
+      await program.methods
+        .withdraw(new BN(remaining.amount.toString()))
+        .accountsPartial({
+          owner: owner.publicKey,
+          mint: feeMint,
+          vault: feeVault,
+          destination: feeOwnerAta,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      // Fees are withheld in the account receiving a transfer, so the deposit above left them
+      // in the vault and no withdrawal takes them out again. The token program refuses to
+      // close an account while they sit there.
+      const withheld = await withheldOn(feeVault);
+      assert.isTrue(withheld > 0n, "vault must really hold fees or this proves nothing");
+
+      const mintBefore = await withheldOnMint();
+
+      await program.methods
+        .closeVault()
+        .accountsPartial({
+          owner: owner.publicKey,
+          mint: feeMint,
+          vault: feeVault,
+          rentDestination: owner.publicKey,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([owner])
+        .rpc();
+
+      assert.isNull(await connection.getAccountInfo(feeVault), "vault should be gone");
+      assert.equal(
+        ((await withheldOnMint()) - mintBefore).toString(),
+        withheld.toString(),
+        "the fees were swept to the mint, not destroyed with the account"
+      );
     });
   });
 });
