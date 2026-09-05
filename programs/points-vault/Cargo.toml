@@ -1,7 +1,7 @@
 [package]
 name = "points-vault"
 version = "0.1.0"
-description = "Non-custodial SPL token vaults. The program never holds authority over user funds."
+description = "Per-wallet SPL token vaults. The owner's signature is the only thing that authorises an exit."
 edition = "2021"
 
 # Rust 1.89. Anything older than v1.52 ships a cargo that cannot parse the
@@ -22,5 +22,5 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.31.1", features = ["event-cpi"] }
+anchor-lang = { version = "0.31.1", features = ["event-cpi", "init-if-needed"] }
 anchor-spl = "0.31.1"

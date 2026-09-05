@@ -1,6 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Connection, PublicKey, Keypair } from "@solana/web3.js";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import bs58 from "bs58";
 
 /// Anchor tags every `emit_cpi!` self-CPI with this 8-byte prefix before the event's own
@@ -9,22 +14,29 @@ const CPI_EVENT_TAG = Buffer.from([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1
 
 export const VAULT_SEED = Buffer.from("vault");
 
-export function deriveVault(
-  programId: PublicKey,
-  owner: PublicKey,
-  mint: PublicKey
-): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [VAULT_SEED, owner.toBuffer(), mint.toBuffer()],
-    programId
-  )[0];
+/** A wallet's one vault, which holds a token account per mint beneath it. */
+export function deriveVault(programId: PublicKey, owner: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([VAULT_SEED, owner.toBuffer()], programId)[0];
 }
 
 /**
- * Pull `emit_cpi!` events out of a confirmed transaction. Because these events are self-CPIs
- * rather than log lines, they live in the transaction's inner instructions. This mirrors what
- * the Rust indexer does, so it doubles as a check that the events are decodable downstream.
+ * Where a vault holds one mint: an ordinary associated token account, owned by the vault PDA.
+ * Off-curve, because a PDA is by construction not on the ed25519 curve.
  */
+export function deriveVaultTokenAccount(
+  vault: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey = TOKEN_PROGRAM_ID
+): PublicKey {
+  return getAssociatedTokenAddressSync(
+    mint,
+    vault,
+    true,
+    tokenProgram,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+}
+
 /**
  * A confirmed signature is not immediately queryable via getTransaction, so poll briefly.
  */
@@ -40,6 +52,11 @@ export async function getTransaction(connection: Connection, signature: string) 
   throw new Error(`transaction ${signature} never became available`);
 }
 
+/**
+ * Pull `emit_cpi!` events out of a confirmed transaction. Because these events are self-CPIs
+ * rather than log lines, they live in the transaction's inner instructions. This mirrors what
+ * the Rust indexer does, so it doubles as a check that the events are decodable downstream.
+ */
 export async function fetchEvents<T extends anchor.Idl>(
   connection: Connection,
   program: Program<T>,

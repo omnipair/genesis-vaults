@@ -8,9 +8,9 @@ pub enum PointsVaultError {
     #[msg("Vault balance accounting overflowed")]
     BalanceOverflow,
 
-    #[msg("Vault must be empty before it can be closed")]
+    #[msg("Token account must be empty before it can be closed")]
     VaultNotEmpty,
 
-    #[msg("A vault cannot be both sides of a transfer")]
+    #[msg("A token account cannot be both sides of a transfer")]
     SelfTransfer,
 }

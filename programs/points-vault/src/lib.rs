@@ -1,41 +1,48 @@
 //! # Points Vault
 //!
-//! A vault is a plain SPL token account living at a deterministic address derived from
-//! `["vault", owner, mint]`, so a wallet has exactly one vault per mint. The program signs
-//! exactly once in a vault's lifetime: to allocate the account. It immediately sets the token
-//! authority to the owner's wallet and from that moment holds no privilege over the funds
-//! whatsoever.
+//! A wallet has one vault, at `["vault", owner]`, and a vault holds one associated token
+//! account per mint. The token authority on every one of them is the vault PDA, so the
+//! program signs each transfer *out* while transfers *in* are signed by whoever owns the
+//! money. The owner's signature is the only thing that authorises an exit: the vault's
+//! address is derived from their key, so a different signer derives a different vault.
 //!
-//! `deposit`, `withdraw` and `close_vault` are conveniences. Each performs a CPI signed by
-//! the *user*, never by the program, and emits an event so the indexer can follow along.
-//! Nothing stops a user from bypassing this program entirely with raw SPL Token
-//! instructions; that is the point.
+//! There is no admin key, no pause switch, and no instruction that takes a privileged
+//! authority. What the program cannot offer, unlike a design that leaves the authority on the
+//! user's own wallet, is independence from itself — funds leave through `withdraw` or they do
+//! not leave. `eject` is the concession to that: it hands a token account's authority back to
+//! the owner's wallet, so a defect on the withdrawal path is survivable even after the
+//! program is made immutable.
 
 use anchor_lang::prelude::*;
 
 pub mod errors;
 pub mod events;
 pub mod instructions;
+pub mod state;
 
 pub use errors::*;
 pub use events::*;
 pub use instructions::*;
+pub use state::*;
 
-declare_id!("BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er");
+declare_id!("qAtXGjatDymFUURzXLmc7ijNukSVk5aZbohtGANH8xw");
 
-/// Seed prefix for the vault token account address.
+/// Seed prefix for both the vault account and the PDA that signs for its token accounts.
 pub const VAULT_SEED: &[u8] = b"vault";
 
 #[program]
 pub mod points_vault {
     use super::*;
 
-    /// Allocate a token account at the vault PDA and hand its authority to `owner`.
-    ///
-    /// The address is fixed by `owner` and `mint` alone, so a second call for the same pair
-    /// fails at allocation: the account already exists.
+    /// Allocate the caller's vault. One per wallet; a second call fails at allocation.
     pub fn create_vault(ctx: Context<CreateVault>) -> Result<()> {
         instructions::create_vault::handler(ctx)
+    }
+
+    /// Give a vault somewhere to hold one mint, by creating the vault PDA's associated token
+    /// account for it. Permissionless, and tolerant of the account already existing.
+    pub fn open_token_account(ctx: Context<OpenTokenAccount>) -> Result<()> {
+        instructions::open_token_account::handler(ctx)
     }
 
     /// Move tokens into a vault. Anyone may deposit into anyone's vault.
@@ -43,13 +50,25 @@ pub mod points_vault {
         instructions::deposit::handler(ctx, amount)
     }
 
-    /// Move tokens out of a vault. Only the owner can, because only the owner is the
-    /// token authority; the program cannot sign for this.
+    /// Move tokens out of a vault. The vault PDA signs the transfer, but only ever in an
+    /// instruction the owner has signed.
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         instructions::withdraw::handler(ctx, amount)
     }
 
-    /// Close an empty vault and reclaim its rent.
+    /// Close one empty token account and reclaim its rent.
+    pub fn close_token_account(ctx: Context<CloseTokenAccount>) -> Result<()> {
+        instructions::close_token_account::handler(ctx)
+    }
+
+    /// Hand a token account's authority back to the owner's wallet, taking it out of the
+    /// vault's control without moving a lamport.
+    pub fn eject(ctx: Context<Eject>) -> Result<()> {
+        instructions::eject::handler(ctx)
+    }
+
+    /// Close the vault account itself and reclaim its rent. Reversible: the address is
+    /// deterministic and `create_vault` puts it back.
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {
         instructions::close_vault::handler(ctx)
     }

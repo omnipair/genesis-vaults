@@ -6,15 +6,18 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+points_vault = "qAtXGjatDymFUURzXLmc7ijNukSVk5aZbohtGANH8xw"
 
 [programs.devnet]
-points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+points_vault = "qAtXGjatDymFUURzXLmc7ijNukSVk5aZbohtGANH8xw"
 
-# Deployed 2026-08-10 in slot 438418459. Same address as the other clusters: the program
-# keypair was never committed, so it was still unclaimed on mainnet.
+# A new address for the per-wallet vault design, deployed 2026-09-04 in slot 444251560. The
+# old one-token-account-per-mint program at BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er
+# (deployed 2026-08-10 in slot 438418459) is left running and untouched; nothing here upgrades
+# it. Slot 444251560 is where a backfill of this deployment starts: nothing before it can name
+# this program.
 [programs.mainnet]
-points_vault = "BfpWw4DFYvzAHJcRj3nYLBrosRrqJrfFTdPL2HYyw6Er"
+points_vault = "qAtXGjatDymFUURzXLmc7ijNukSVk5aZbohtGANH8xw"
 
 [registry]
 url = "https://api.apr.dev"
