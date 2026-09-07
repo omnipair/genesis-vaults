@@ -9,9 +9,10 @@
 //! There is no admin key, no pause switch, and no instruction that takes a privileged
 //! authority. What the program cannot offer, unlike a design that leaves the authority on the
 //! user's own wallet, is independence from itself — funds leave through `withdraw` or they do
-//! not leave. `eject` is the concession to that: it hands a token account's authority back to
-//! the owner's wallet, so a defect on the withdrawal path is survivable even after the
-//! program is made immutable.
+//! not leave. `eject` is the concession to that for classic SPL Token: it hands a token
+//! account's authority back to the owner's wallet, so a defect on the withdrawal path is
+//! survivable even after the program is made immutable. Token-2022 ATAs cannot be ejected
+//! (`ImmutableOwner`); those balances exit only via `withdraw`.
 
 use anchor_lang::prelude::*;
 
@@ -62,7 +63,8 @@ pub mod points_vault {
     }
 
     /// Hand a token account's authority back to the owner's wallet, taking it out of the
-    /// vault's control without moving a lamport.
+    /// vault's control without moving a lamport. Classic SPL Token only: Token-2022 ATAs
+    /// carry `ImmutableOwner` and reject this `SetAuthority`.
     pub fn eject(ctx: Context<Eject>) -> Result<()> {
         instructions::eject::handler(ctx)
     }

@@ -63,8 +63,10 @@ pub struct TokenAccountClosed {
 }
 
 /// The owner took a token account back out of the vault's control, reassigning its SPL
-/// authority to their own wallet. The account still exists and still holds its balance, but
-/// the vault no longer governs it and the indexer should stop counting it.
+/// authority to their own wallet (classic SPL Token only; Token-2022 ATAs cannot emit this
+/// because `ImmutableOwner` blocks the authority change). The account still exists and still
+/// holds its balance, but the vault no longer governs it and the indexer should stop counting
+/// it.
 #[event]
 pub struct TokenAccountEjected {
     pub vault: Pubkey,

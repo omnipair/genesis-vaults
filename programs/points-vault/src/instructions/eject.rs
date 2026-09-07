@@ -6,7 +6,7 @@ use anchor_spl::{
 
 use crate::{events::TokenAccountEjected, state::Vault, VAULT_SEED};
 
-/// The escape hatch.
+/// The escape hatch — classic SPL Token only.
 ///
 /// Holding the token authority on the vault PDA makes this program the only way funds can
 /// leave, which is a dependency on the program being correct — and once its upgrade authority
@@ -18,6 +18,11 @@ use crate::{events::TokenAccountEjected, state::Vault, VAULT_SEED};
 /// Nothing is destroyed. The account keeps its balance and its address; it simply stops being
 /// governed by the vault, and the `associated_token::authority` constraint on every other
 /// instruction stops matching until the owner assigns it back.
+///
+/// Token-2022 ATAs are created with the `ImmutableOwner` extension, which rejects
+/// `SetAuthority(AccountOwner)`. This instruction therefore only works for classic SPL Token
+/// accounts. Token-2022 vault balances still leave through `withdraw` (and empty accounts
+/// through `close_token_account`); we deliberately do not add a separate Token-2022 eject path.
 #[event_cpi]
 #[derive(Accounts)]
 pub struct Eject<'info> {
