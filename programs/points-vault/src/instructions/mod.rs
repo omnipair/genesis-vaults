@@ -1,3 +1,4 @@
+pub(crate) mod accounts;
 pub mod close_token_account;
 pub mod close_vault;
 pub mod create_vault;

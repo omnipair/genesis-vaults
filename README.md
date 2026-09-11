@@ -102,6 +102,12 @@ token program a holding uses is fixed when its account is opened and recorded in
 `TokenAccountOpened`; it is also part of the associated token address derivation, so the two
 cannot disagree.
 
+Token-2022 support is limited to mints with `TransferFeeConfig`, `MetadataPointer`, and
+`TokenMetadata` extensions. `open_token_account` and `deposit` reject every other extension.
+In particular, transfer-hook mints are not accepted because the vault instructions do not take
+or forward a hook program's extra accounts. The deposit check is repeated because anyone can
+create the vault's deterministic ATA without calling `open_token_account`.
+
 A transfer fee is withheld in the account *receiving* a transfer, so a vault token account
 accumulates withheld fees as deposits arrive and no withdrawal takes them back out. They are
 not part of the balance, and the token program refuses to close an account while any remain.

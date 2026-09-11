@@ -4,7 +4,10 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::{events::TokenAccountOpened, state::Vault, VAULT_SEED};
+use crate::{
+    events::TokenAccountOpened, instructions::accounts::require_supported_asset_mint, state::Vault,
+    VAULT_SEED,
+};
 
 #[event_cpi]
 #[derive(Accounts)]
@@ -46,6 +49,8 @@ pub struct OpenTokenAccount<'info> {
 }
 
 pub(crate) fn handler(ctx: Context<OpenTokenAccount>) -> Result<()> {
+    require_supported_asset_mint(&ctx.accounts.mint)?;
+
     emit_cpi!(TokenAccountOpened {
         vault: ctx.accounts.vault.key(),
         owner: ctx.accounts.owner.key(),

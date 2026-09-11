@@ -1,6 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   ExtensionType,
@@ -9,6 +14,7 @@ import {
   createAssociatedTokenAccount,
   createAssociatedTokenAccountInstruction,
   createInitializeMint2Instruction,
+  createInitializeNonTransferableMintInstruction,
   createInitializeTransferFeeConfigInstruction,
   createMint,
   createTransferCheckedInstruction,
@@ -83,8 +89,18 @@ describe("points_vault", () => {
 
     const payer = (provider.wallet as anchor.Wallet).payer;
 
-    ownerAta = await createAssociatedTokenAccount(connection, payer, mint, owner.publicKey);
-    ownerAtaB = await createAssociatedTokenAccount(connection, payer, mintB, owner.publicKey);
+    ownerAta = await createAssociatedTokenAccount(
+      connection,
+      payer,
+      mint,
+      owner.publicKey
+    );
+    ownerAtaB = await createAssociatedTokenAccount(
+      connection,
+      payer,
+      mintB,
+      owner.publicKey
+    );
     strangerAta = await createAssociatedTokenAccount(
       connection,
       payer,
@@ -109,7 +125,11 @@ describe("points_vault", () => {
     it("creates one account per wallet, recording its owner", async () => {
       const sig = await program.methods
         .createVault()
-        .accountsPartial({ payer: owner.publicKey, owner: owner.publicKey, vault })
+        .accountsPartial({
+          payer: owner.publicKey,
+          owner: owner.publicKey,
+          vault,
+        })
         .signers([owner])
         .rpc();
 
@@ -130,13 +150,20 @@ describe("points_vault", () => {
       try {
         await program.methods
           .createVault()
-          .accountsPartial({ payer: owner.publicKey, owner: owner.publicKey, vault })
+          .accountsPartial({
+            payer: owner.publicKey,
+            owner: owner.publicKey,
+            vault,
+          })
           .signers([owner])
           .rpc();
       } catch (e) {
         failed = true;
       }
-      assert.isTrue(failed, "a second vault for the same wallet must not be creatable");
+      assert.isTrue(
+        failed,
+        "a second vault for the same wallet must not be creatable"
+      );
     });
 
     it("refuses to create a vault for a wallet that did not sign", async () => {
@@ -162,7 +189,10 @@ describe("points_vault", () => {
       } catch (e) {
         failed = true;
       }
-      assert.isTrue(failed, "creating a vault without the owner's signature must fail");
+      assert.isTrue(
+        failed,
+        "creating a vault without the owner's signature must fail"
+      );
       assert.isNull(await connection.getAccountInfo(victimVault));
     });
   });
@@ -246,6 +276,130 @@ describe("points_vault", () => {
     });
   });
 
+  describe("unsupported Token-2022 extensions", () => {
+    let unsupportedMint: PublicKey;
+    let unsupportedOwnerAta: PublicKey;
+    let unsupportedVaultAta: PublicKey;
+
+    before(async () => {
+      const payer = (provider.wallet as anchor.Wallet).payer;
+      const mintKeypair = Keypair.generate();
+      unsupportedMint = mintKeypair.publicKey;
+      unsupportedVaultAta = deriveVaultTokenAccount(
+        vault,
+        unsupportedMint,
+        TOKEN_2022_PROGRAM_ID
+      );
+
+      const space = getMintLen([ExtensionType.NonTransferable]);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.createAccount({
+            fromPubkey: payer.publicKey,
+            newAccountPubkey: unsupportedMint,
+            space,
+            lamports: await connection.getMinimumBalanceForRentExemption(space),
+            programId: TOKEN_2022_PROGRAM_ID,
+          }),
+          createInitializeNonTransferableMintInstruction(
+            unsupportedMint,
+            TOKEN_2022_PROGRAM_ID
+          ),
+          createInitializeMint2Instruction(
+            unsupportedMint,
+            DECIMALS,
+            payer.publicKey,
+            null,
+            TOKEN_2022_PROGRAM_ID
+          )
+        ),
+        [mintKeypair]
+      );
+
+      unsupportedOwnerAta = await createAssociatedTokenAccount(
+        connection,
+        payer,
+        unsupportedMint,
+        owner.publicKey,
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
+      await mintTo(
+        connection,
+        payer,
+        unsupportedMint,
+        unsupportedOwnerAta,
+        payer,
+        ONE,
+        [],
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
+    });
+
+    it("rejects opening a vault account for an unsupported mint", async () => {
+      try {
+        await program.methods
+          .openTokenAccount()
+          .accountsPartial({
+            payer: owner.publicKey,
+            owner: owner.publicKey,
+            vault,
+            mint: unsupportedMint,
+            tokenAccount: unsupportedVaultAta,
+            tokenProgram: TOKEN_2022_PROGRAM_ID,
+          })
+          .signers([owner])
+          .rpc();
+        assert.fail("an unsupported mint must not be opened");
+      } catch (e: any) {
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain(
+          "UnsupportedMintExtensions"
+        );
+      }
+
+      assert.isNull(
+        await connection.getAccountInfo(unsupportedVaultAta),
+        "the account creation must roll back with the rejected instruction"
+      );
+    });
+
+    it("rejects deposits when the vault ATA was created outside the program", async () => {
+      const payer = (provider.wallet as anchor.Wallet).payer;
+      await createAssociatedTokenAccount(
+        connection,
+        payer,
+        unsupportedMint,
+        vault,
+        undefined,
+        TOKEN_2022_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+        true
+      );
+
+      try {
+        await program.methods
+          .deposit(new BN(ONE))
+          .accountsPartial({
+            depositor: owner.publicKey,
+            owner: owner.publicKey,
+            vault,
+            mint: unsupportedMint,
+            source: unsupportedOwnerAta,
+            tokenAccount: unsupportedVaultAta,
+            tokenProgram: TOKEN_2022_PROGRAM_ID,
+          })
+          .signers([owner])
+          .rpc();
+        assert.fail("an unsupported mint must not be deposited");
+      } catch (e: any) {
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain(
+          "UnsupportedMintExtensions"
+        );
+      }
+    });
+  });
+
   describe("deposit", () => {
     it("moves tokens in and reports the measured balance delta", async () => {
       const sig = await program.methods
@@ -269,8 +423,14 @@ describe("points_vault", () => {
       const deposited = events.find((e) => e.name === "deposited");
       assert.ok(deposited);
       assert.equal(deposited!.data.amount.toString(), (100 * ONE).toString());
-      assert.equal(deposited!.data.amountReceived.toString(), (100 * ONE).toString());
-      assert.equal(deposited!.data.newBalance.toString(), (100 * ONE).toString());
+      assert.equal(
+        deposited!.data.amountReceived.toString(),
+        (100 * ONE).toString()
+      );
+      assert.equal(
+        deposited!.data.newBalance.toString(),
+        (100 * ONE).toString()
+      );
       assert.isTrue(deposited!.data.depositor.equals(owner.publicKey));
       assert.isTrue(deposited!.data.tokenAccount.equals(vaultAta));
     });
@@ -316,7 +476,9 @@ describe("points_vault", () => {
           .rpc();
         assert.fail("a zero amount must be rejected");
       } catch (e: any) {
-        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("ZeroAmount");
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain(
+          "ZeroAmount"
+        );
       }
     });
 
@@ -369,13 +531,22 @@ describe("points_vault", () => {
         .rpc();
 
       const after = await getAccount(connection, ownerAta);
-      assert.equal((after.amount - before.amount).toString(), (30 * ONE).toString());
+      assert.equal(
+        (after.amount - before.amount).toString(),
+        (30 * ONE).toString()
+      );
 
       const events = await fetchEvents(connection, program, sig);
       const withdrawn = events.find((e) => e.name === "withdrawn");
       assert.ok(withdrawn);
-      assert.equal(withdrawn!.data.amountDebited.toString(), (30 * ONE).toString());
-      assert.equal(withdrawn!.data.newBalance.toString(), (120 * ONE).toString());
+      assert.equal(
+        withdrawn!.data.amountDebited.toString(),
+        (30 * ONE).toString()
+      );
+      assert.equal(
+        withdrawn!.data.newBalance.toString(),
+        (120 * ONE).toString()
+      );
     });
 
     it("does not let anyone but the owner withdraw", async () => {
@@ -396,7 +567,9 @@ describe("points_vault", () => {
       } catch (e: any) {
         // The seeds bind the vault to `owner`, so a stranger's derivation never matches and
         // the PDA signature the program would produce is for a different address entirely.
-        expect(e.toString()).to.match(/ConstraintSeeds|ConstraintRaw|2006|2003/);
+        expect(e.toString()).to.match(
+          /ConstraintSeeds|ConstraintRaw|2006|2003/
+        );
       }
 
       const account = await getAccount(connection, vaultAta);
@@ -421,7 +594,9 @@ describe("points_vault", () => {
           .rpc();
         assert.fail("a withdrawal into the vault itself must be rejected");
       } catch (e: any) {
-        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("SelfTransfer");
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain(
+          "SelfTransfer"
+        );
       }
 
       const after = await getAccount(connection, vaultAta);
@@ -436,7 +611,10 @@ describe("points_vault", () => {
   describe("custody invariants", () => {
     it("puts the token authority on the vault PDA, so the wallet cannot transfer directly", async () => {
       const before = await getAccount(connection, vaultAta);
-      assert.isTrue(before.amount > 0n, "vault should hold something to try to move");
+      assert.isTrue(
+        before.amount > 0n,
+        "vault should hold something to try to move"
+      );
 
       // A bare SPL Token instruction signed by the owner. It fails: the owner's wallet is not
       // the token authority any more, the vault PDA is.
@@ -455,7 +633,10 @@ describe("points_vault", () => {
       } catch (e) {
         failed = true;
       }
-      assert.isTrue(failed, "only the program can move funds out of a vault token account");
+      assert.isTrue(
+        failed,
+        "only the program can move funds out of a vault token account"
+      );
 
       const after = await getAccount(connection, vaultAta);
       assert.equal(after.amount.toString(), before.amount.toString());
@@ -465,13 +646,23 @@ describe("points_vault", () => {
       // An inverted version of the guarantee this design gives up. The program does sign now,
       // so the check is no longer "never" but "nowhere unexpected": a PDA signature appearing
       // in `deposit`, or in creating an account, would be a real finding.
-      const srcDir = path.join(__dirname, "..", "programs", "points-vault", "src");
+      const srcDir = path.join(
+        __dirname,
+        "..",
+        "programs",
+        "points-vault",
+        "src"
+      );
       const expected = ["close_token_account.rs", "eject.rs", "withdraw.rs"];
 
       const walk = (dir: string): string[] =>
         fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
           const full = path.join(dir, entry.name);
-          return entry.isDirectory() ? walk(full) : full.endsWith(".rs") ? [full] : [];
+          return entry.isDirectory()
+            ? walk(full)
+            : full.endsWith(".rs")
+            ? [full]
+            : [];
         });
 
       const signing: string[] = [];
@@ -481,10 +672,15 @@ describe("points_vault", () => {
           .readFileSync(file, "utf8")
           .replace(/\/\/.*$/gm, "")
           .replace(/\/\*[\s\S]*?\*\//g, "");
-        if (/new_with_signer|invoke_signed/.test(code)) signing.push(path.basename(file));
+        if (/new_with_signer|invoke_signed/.test(code))
+          signing.push(path.basename(file));
       }
 
-      assert.deepEqual(signing.sort(), expected, "the set of PDA-signing paths changed");
+      assert.deepEqual(
+        signing.sort(),
+        expected,
+        "the set of PDA-signing paths changed"
+      );
     });
 
     it("requires the owner's signature on every instruction where the program signs", () => {
@@ -503,7 +699,10 @@ describe("points_vault", () => {
         assert.ok(ix, `${name} should exist in the IDL`);
         const owner = ix.accounts.find((a: any) => a.name === "owner");
         assert.ok(owner, `${name} should take an owner account`);
-        assert.isTrue(owner.signer === true, `${name} must require the owner to sign`);
+        assert.isTrue(
+          owner.signer === true,
+          `${name} must require the owner to sign`
+        );
       }
     });
 
@@ -560,7 +759,10 @@ describe("points_vault", () => {
         .rpc();
 
       const account = await getAccount(connection, vaultAtaB);
-      assert.isTrue(account.owner.equals(owner.publicKey), "authority is the wallet again");
+      assert.isTrue(
+        account.owner.equals(owner.publicKey),
+        "authority is the wallet again"
+      );
       assert.equal(
         account.amount.toString(),
         (40 * ONE).toString(),
@@ -587,10 +789,15 @@ describe("points_vault", () => {
         40 * ONE,
         DECIMALS
       );
-      const sig = await provider.sendAndConfirm(new Transaction().add(ix), [owner]);
+      const sig = await provider.sendAndConfirm(new Transaction().add(ix), [
+        owner,
+      ]);
 
       const after = await getAccount(connection, ownerAtaB);
-      assert.equal((after.amount - before.amount).toString(), (40 * ONE).toString());
+      assert.equal(
+        (after.amount - before.amount).toString(),
+        (40 * ONE).toString()
+      );
 
       const confirmed = await getTransaction(connection, sig);
       const programs = confirmed.transaction.message
@@ -620,7 +827,9 @@ describe("points_vault", () => {
           .rpc();
         assert.fail("an ejected account is no longer part of the vault");
       } catch (e: any) {
-        expect(e.toString()).to.match(/ConstraintTokenOwner|ConstraintAssociated|2015|2009/);
+        expect(e.toString()).to.match(
+          /ConstraintTokenOwner|ConstraintAssociated|2015|2009/
+        );
       }
     });
   });
@@ -645,7 +854,9 @@ describe("points_vault", () => {
           .rpc();
         assert.fail("an account holding tokens must not be closeable");
       } catch (e: any) {
-        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("VaultNotEmpty");
+        expect(e.error?.errorCode?.code ?? e.toString()).to.contain(
+          "VaultNotEmpty"
+        );
       }
     });
 
@@ -677,7 +888,10 @@ describe("points_vault", () => {
         .signers([owner])
         .rpc();
 
-      assert.isNull(await connection.getAccountInfo(vaultAta), "token account should be gone");
+      assert.isNull(
+        await connection.getAccountInfo(vaultAta),
+        "token account should be gone"
+      );
 
       const events = await fetchEvents(connection, program, sig);
       const closed = events.find((e) => e.name === "tokenAccountClosed");
@@ -710,11 +924,18 @@ describe("points_vault", () => {
     it("closes the vault account and returns its rent", async () => {
       const sig = await program.methods
         .closeVault()
-        .accountsPartial({ owner: owner.publicKey, vault, rentDestination: owner.publicKey })
+        .accountsPartial({
+          owner: owner.publicKey,
+          vault,
+          rentDestination: owner.publicKey,
+        })
         .signers([owner])
         .rpc();
 
-      assert.isNull(await connection.getAccountInfo(vault), "vault account should be gone");
+      assert.isNull(
+        await connection.getAccountInfo(vault),
+        "vault account should be gone"
+      );
 
       const events = await fetchEvents(connection, program, sig);
       const closed = events.find((e) => e.name === "vaultClosed");
@@ -733,7 +954,11 @@ describe("points_vault", () => {
 
       await program.methods
         .createVault()
-        .accountsPartial({ payer: owner.publicKey, owner: owner.publicKey, vault })
+        .accountsPartial({
+          payer: owner.publicKey,
+          owner: owner.publicKey,
+          vault,
+        })
         .signers([owner])
         .rpc();
 
@@ -789,12 +1014,22 @@ describe("points_vault", () => {
 
     /** Fees taken out of transfers into `address`, waiting to be swept to the mint. */
     async function withheldOn(address: PublicKey): Promise<bigint> {
-      const account = await getAccount(connection, address, undefined, TOKEN_2022_PROGRAM_ID);
+      const account = await getAccount(
+        connection,
+        address,
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
       return getTransferFeeAmount(account)?.withheldAmount ?? 0n;
     }
 
     async function withheldOnMint(): Promise<bigint> {
-      const info = await getMint(connection, feeMint, undefined, TOKEN_2022_PROGRAM_ID);
+      const info = await getMint(
+        connection,
+        feeMint,
+        undefined,
+        TOKEN_2022_PROGRAM_ID
+      );
       return getTransferFeeConfig(info)?.withheldAmount ?? 0n;
     }
 
@@ -856,7 +1091,11 @@ describe("points_vault", () => {
 
       // The same vault already holds a classic mint, so this also covers one wallet holding
       // two mints across two different token programs.
-      feeVaultAta = deriveVaultTokenAccount(vault, feeMint, TOKEN_2022_PROGRAM_ID);
+      feeVaultAta = deriveVaultTokenAccount(
+        vault,
+        feeMint,
+        TOKEN_2022_PROGRAM_ID
+      );
     });
 
     it("opens a token account sized for the extensions the mint requires", async () => {
@@ -882,7 +1121,10 @@ describe("points_vault", () => {
         TOKEN_2022_PROGRAM_ID
       );
       assert.isTrue(account.owner.equals(vault));
-      assert.isNotNull(getTransferFeeAmount(account), "should carry the fee extension");
+      assert.isNotNull(
+        getTransferFeeAmount(account),
+        "should carry the fee extension"
+      );
     });
 
     it("reports the amount that arrived, not the amount that was sent", async () => {
@@ -923,7 +1165,10 @@ describe("points_vault", () => {
         TOKEN_2022_PROGRAM_ID
       );
       assert.equal(account.amount.toString(), (sent - feeOn(sent)).toString());
-      assert.equal((await withheldOn(feeVaultAta)).toString(), feeOn(sent).toString());
+      assert.equal(
+        (await withheldOn(feeVaultAta)).toString(),
+        feeOn(sent).toString()
+      );
     });
 
     it("debits the vault in full on the way out, the fee falling on the destination", async () => {
@@ -963,7 +1208,10 @@ describe("points_vault", () => {
         undefined,
         TOKEN_2022_PROGRAM_ID
       );
-      assert.equal((after.amount - before.amount).toString(), (asked - feeOn(asked)).toString());
+      assert.equal(
+        (after.amount - before.amount).toString(),
+        (asked - feeOn(asked)).toString()
+      );
     });
 
     it("closes a token account that is empty but still holds withheld fees", async () => {
@@ -990,7 +1238,10 @@ describe("points_vault", () => {
       // here and no withdrawal takes them out again. The token program refuses to close an
       // account while they sit there.
       const withheld = await withheldOn(feeVaultAta);
-      assert.isTrue(withheld > 0n, "the account must really hold fees or this proves nothing");
+      assert.isTrue(
+        withheld > 0n,
+        "the account must really hold fees or this proves nothing"
+      );
 
       const mintBefore = await withheldOnMint();
 
@@ -1007,7 +1258,10 @@ describe("points_vault", () => {
         .signers([owner])
         .rpc();
 
-      assert.isNull(await connection.getAccountInfo(feeVaultAta), "account should be gone");
+      assert.isNull(
+        await connection.getAccountInfo(feeVaultAta),
+        "account should be gone"
+      );
       assert.equal(
         ((await withheldOnMint()) - mintBefore).toString(),
         withheld.toString(),

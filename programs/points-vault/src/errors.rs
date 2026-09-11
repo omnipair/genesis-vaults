@@ -13,4 +13,7 @@ pub enum PointsVaultError {
 
     #[msg("A token account cannot be both sides of a transfer")]
     SelfTransfer,
+
+    #[msg("The mint uses unsupported Token-2022 extensions")]
+    UnsupportedMintExtensions,
 }

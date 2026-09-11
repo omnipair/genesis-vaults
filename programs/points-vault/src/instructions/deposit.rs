@@ -3,7 +3,10 @@ use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-use crate::{errors::PointsVaultError, events::Deposited, state::Vault, VAULT_SEED};
+use crate::{
+    errors::PointsVaultError, events::Deposited,
+    instructions::accounts::require_supported_asset_mint, state::Vault, VAULT_SEED,
+};
 
 #[event_cpi]
 #[derive(Accounts)]
@@ -50,6 +53,7 @@ pub struct Deposit<'info> {
 
 pub(crate) fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount > 0, PointsVaultError::ZeroAmount);
+    require_supported_asset_mint(&ctx.accounts.mint)?;
 
     let balance_before = ctx.accounts.token_account.amount;
 
